@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мой 2D Майнкрафт Сайт</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #74b9ff;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        /* Панель быстрого доступа (Хотбар) как в Майнкрафте */
+        #hotbar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(40, 40, 40, 0.85);
+            padding: 6px;
+            border: 3px solid #4a4a4a;
+            border-radius: 4px;
+            display: flex;
+            gap: 6px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .slot {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #8b8b8b;
+            background: #8b8b8b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.1s;
+        }
+        .slot:hover {
+            background: #a1a1a1;
+            border-color: #ffffff;
+        }
+        .slot.active {
+            border-color: #fffb00;
+            background: #b3b3b3;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+        }
+        .block-preview {
+            width: 32px;
+            height: 32px;
+            border-radius: 2px;
+            box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+        }
+        .slot-key {
+            position: absolute;
+            top: 2px;
+            left: 4px;
+            font-size: 10px;
+            color: #fff;
+            text-shadow: 1px 1px 1px #000;
+            font-weight: bold;
+        }
+        /* Справка по управлению */
+        #info {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 12px 18px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="info">
+    <b style="color: #5cc43e; font-size: 15px;">Управление строительством:</b><br>
+    • <b>ЛКМ</b> (Левая кнопка) — Сломать блок<br>
+    • <b>ПКМ</b> (Правая кнопка) — Поставить блок<br>
+    • <b>A / D</b> (или стрелочки) — Движение<br>
+    • <b>W / Пробел</b> — Прыжок<br>
+    • <b>Цифры 1-5</b> — Смена блока
+</div>
+
+<!-- Игровой инвентарь на сайте -->
+<div id="hotbar">
+    <div class="slot active" onclick="selectSlot(1)" id="slot-1"><span class="slot-key">1</span><div class="block-preview" style="background:#5cc43e;"></div></div>
+    <div class="slot" onclick="selectSlot(2)" id="slot-2"><span class="slot-key">2</span><div class="block-preview" style="background:#855429;"></div></div>
+    <div class="slot" onclick="selectSlot(3)" id="slot-3"><span class="slot-key">3</span><div class="block-preview" style="background:#737373;"></div></div>
+    <div class="slot" onclick="selectSlot(4)" id="slot-4"><span class="slot-key">4</span><div class="block-preview" style="background:#d4a373;"></div></div>
+    <div class="slot" onclick="selectSlot(5)" id="slot-5"><span class="slot-key">5</span><div class="block-preview" style="background:#e74c3c;"></div></div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const BLOCK_SIZE = 32;
+const COLS = Math.ceil(canvas.width / BLOCK_SIZE);
+const ROWS = Math.ceil(canvas.height / BLOCK_SIZE);
+
+// ID Блоков
+const AIR = 0;
+const GRASS = 1;
+const DIRT = 2;
+const STONE = 3;
+const WOOD = 4;
+const BRICK = 5;
+
+// Цвета для рендеринга
+const BLOCK_COLORS = {
+    [AIR]: "#74b9ff",
+    [GRASS]: "#5cc43e",
+    [DIRT]: "#855429",
+    [STONE]: "#737373",
+    [WOOD]: "#d4a373",
+    [BRICK]: "#e74c3c"
+};
+
+// Хотбар привязка слотов к ID блоков
+const SLOT_MAP = { 1: GRASS, 2: DIRT, 3: STONE, 4: WOOD, 5: BRICK };
+let currentBlock = GRASS;
+
+// Генерация плоского мира с холмами
+let world = [];
+for (let x = 0; x < COLS; x++) {
+    world[x] = [];
+    let groundHeight = Math.floor(ROWS / 1.6 + Math.sin(x * 0.15) * 2);
+    for (let y = 0; y < ROWS; y++) {
+        if (y < groundHeight) world[x][y] = AIR;
+        else if (y === groundHeight) world[x][y] = GRASS;
+        else if (y > groundHeight && y < groundHeight + 4) world[x][y] = DIRT;
+        else world[x][y] = STONE;
+    }
+}
+
+// Игрок
+const player = {
+    x: canvas.width / 2, y: 50,
+    width: 22, height: 46,
+    vx: 0, vy: 0,
+    speed: 4.5, jumpForce: 8.5, gravity: 0.4,
+    onGround: false
+};
+
+let keys = {};
+let mouseX = 0, mouseY = 0;
+
+// Отслеживание мышки для подсветки сетки
+window.addEventListener("mousemove", (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+});
+
+// Выбор блока кликом или кнопками
+function selectSlot(num) {
+    document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+    document.getElementById(`slot-${num}`).classList.add('active');
+    currentBlock = SLOT_MAP[num];
+}
+
+window.addEventListener("keydown", (e) => {
+    keys[e.code] = true;
+    if (['1','2','3','4','5'].includes(e.key)) selectSlot(parseInt(e.key));
+});
+window.addEventListener("keyup", (e) => keys[e.code] = false);
+window.addEventListener("contextmenu", e => e.preventDefault());
+
+// Ломание и установка блоков
+window.addEventListener("mousedown", (e) => {
+    const blockX = Math.floor(mouseX / BLOCK_SIZE);
+    const blockY = Math.floor(mouseY / BLOCK_SIZE);
+    
+    if (blockX < 0 || blockX >= COLS || blockY < 0 || blockY >= ROWS) return;
+
+    if (e.button === 0) { 
+        // Левый клик — удаляем блок
+        world[blockX][blockY] = AIR;
+    } else if (e.button === 2) { 
+        // Правый клик — ставим выбранный блок
+        const pLeft = Math.floor(player.x / BLOCK_SIZE);
+        const pRight = Math.floor((player.x + player.width) / BLOCK_SIZE);
+        const pTop = Math.floor(player.y / BLOCK_SIZE);
+        const pBottom = Math.floor((player.y + player.height) / BLOCK_SIZE);
+        
+        // Проверка: нельзя ставить блок в тело игрока
+        const intersectsPlayer = (blockX >= pLeft && blockX <= pRight && blockY >= pTop && blockY <= pBottom);
+        
+        if (world[blockX][blockY] === AIR && !intersectsPlayer) {
+            world[blockX][blockY] = currentBlock;
+        }
+    }
+});
+
+function checkCollision(x, y) {
+    const left = Math.floor(x / BLOCK_SIZE);
+    const right = Math.floor((x + player.width) / BLOCK_SIZE);
+    const top = Math.floor(y / BLOCK_SIZE);
+    const bottom = Math.floor((y + player.height) / BLOCK_SIZE);
+    
+    if (left < 0 || right >= COLS || top < 0 || bottom >= ROWS) return true;
+    
+    for (let bx = left; bx <= right; bx++) {
+        for (let by = top; by <= bottom; by++) {
+            if (world[bx][by] !== AIR) return true;
+        }
+    }
+    return false;
+}
+
+function update() {
+    player.vx = 0;
+    if (keys["KeyA"] || keys["ArrowLeft"]) player.vx = -player.speed;
+    if (keys["KeyD"] || keys["ArrowRight"]) player.vx = player.speed;
+    
+    player.x += player.vx;
+    if (checkCollision(player.x, player.y)) player.x -= player.vx;
+    
+    player.vy += player.gravity;
+    player.y += player.vy;
+    player.onGround = false;
+    
+    if (checkCollision(player.x, player.y)) {
+        player.y -= player.vy;
+        if (player.vy > 0) player.onGround = true;
+        player.vy = 0;
+    }
+    
+    if ((keys["Space"] || keys["KeyW"] || keys["ArrowUp"]) && player.onGround) {
+        player.vy = -player.jumpForce;
+        player.onGround = false;
+    }
+
+    if (player.y > canvas.height) { player.x = canvas.width / 2; player.y = 0; player.vy = 0; }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Отрисовка блоков
+    for (let x = 0; x < COLS; x++) {
+        for (let y = 0; y < ROWS; y++) {
+            if (world[x][y] !== AIR) {
+                ctx.fillStyle = BLOCK_COLORS[world[x][y]];
+                ctx.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                ctx.strokeStyle = "rgba(0,0,0,0.06)";
+                ctx.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            }
+        }
+    }
+    
+    // Сетка-прицел под курсором мыши для удобства стройки
+    const hoverBlockX = Math.floor(mouseX / BLOCK_SIZE);
+    const hoverBlockY = Math.floor(mouseY / BLOCK_SIZE);
+    if (hoverBlockX >= 0 && hoverBlockX < COLS && hoverBlockY >= 0 && hoverBlockY < ROWS) {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(hoverBlockX * BLOCK_SIZE, hoverBlockY * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        ctx.lineWidth = 1;
+    }
+    
+    // Рисуем персонажа
+    ctx.fillStyle = "#3498db"; 
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+    ctx.fillStyle = "#ffeaa7"; 
+    ctx.fillRect(player.x + 2, player.y, player.width - 4, 12);
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener("resize", () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
+
+gameLoop();
+</script>
+</body>
+</html>
